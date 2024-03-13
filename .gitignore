@@ -1,0 +1,40 @@
+# .gitignore
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# .csv files
+# *.csv
+*.pkl
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# dotenv environment variables file
+.env
+
+# virtual environment
+venv
+
+# mkdocs documentation
+# /data/raw
+# /data/processed
+
+notebooks/storage/
+notebooks/temp_faiss_db/
+scratch/
