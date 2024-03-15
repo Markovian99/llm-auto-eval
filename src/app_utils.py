@@ -225,19 +225,14 @@ def run_rag(model_name, emb_model_name, file_path, question_column, system_promp
         if prompt.startswith("Exception:"):
             df_input.loc[idx,'rag_response'] = 'Exception: Invalid question.'
         elif prompt!="" and prompt!="nan":
-            data_dict = {}
-            data_dict['prompt'] = prompt
-            data_dict['chat_history'] = []
-
-            # response = chain(inputs={"question":data_dict['prompt'], "chat_history":data_dict['chat_history']})
             if emb_model_name==NO_RETRIEVER_NAME:
                 if template:
-                    prompt = template.format(prompt=data_dict['prompt'])
+                    prompt = template.format(prompt=prompt)
                 response = generate_response(prompt, model_name, system_prompt=system_prompt, temperature=temperature)
                 df_input.loc[idx,'rag_response'] = response
                 df_input.loc[idx,'source_documents'] = "Exception: No retriever used."
             else:
-                response = generate_kb_response(data_dict['prompt'], model_name, system_prompt=system_prompt, template=template,temperature=temperature, include_source=False, retriever = retriever)
+                response = generate_kb_response(prompt, model_name, system_prompt=system_prompt, template=template,temperature=temperature, include_source=False, retriever = retriever)
                 df_input.loc[idx,'rag_response'] = response['answer']
                 df_input.loc[idx,'source_documents'] = str(response['source_documents'])
         else:
@@ -246,46 +241,28 @@ def run_rag(model_name, emb_model_name, file_path, question_column, system_promp
     return df_input
 
 
-def run_rag_multihop(model_name, emb_model_name, file_path, question_column, faiss_dir="../data/faiss-db", temperature=0, k=4):
+def run_rag_multihop(model_name, emb_model_name, file_path, question_column, system_prompt= "", template=None, faiss_dir="../data/faiss-db", temperature=0, k=4):
 
     df_input = pd.read_csv(file_path)
-    model=model_name[8:]
-
     print(f"Running RAG with {len(df_input)} questions from file {file_path}")
 
-    # Will download the model the first time it runs
-    # embedding_function = SentenceTransformerEmbeddings(
-    #     model_name=emb_model_name,
-    #     cache_folder="../models/sentencetransformers",
-    # )
-    embedding_function = HuggingFaceEmbeddings(
-        model_name=emb_model_name,
-        # model_kwargs={'device': 'cuda'},
-        # encode_kwargs={'normalize_embeddings': True}
-        cache_folder="../models/sentencetransformers"
-    )
+    if emb_model_name==NO_RETRIEVER_NAME:
+        print('Exception: Query Splitting Not Relevant without Embedding Model.')
+        df_input.loc[idx,'rag_response'] = 'Exception: Query Splitting Not Relevant without Embedding Model.'
+        df_input.loc[idx,'source_documents'] = None
+        return df_input
+    else:
+        embedding_function = HuggingFaceEmbeddings(
+            model_name=emb_model_name,
+            # model_kwargs={'device': 'cuda'},
+            # encode_kwargs={'normalize_embeddings': True}
+            cache_folder="../models/sentencetransformers"
+        )
+        db = FAISS.load_local(faiss_dir, embedding_function)
+        retriever = VectorStoreRetriever(vectorstore=db, search_kwargs={"k": k})
+        multi_retriever = VectorStoreRetriever(vectorstore=db, search_kwargs={"k": max(1,int(k/2))})
 
     df_input['source_documents'] = None
-
-    if model_name.startswith("OpenAI: "):
-        llm = ChatOpenAI(model=model, temperature=temperature)
-    else:
-        df_input['rag_response'] = 'Exception: Please select an OpenAI model.'
-        return df_input
-
-    db = FAISS.load_local(faiss_dir, embedding_function)
-
-    retriever = VectorStoreRetriever(vectorstore=db, search_kwargs={"k": k})
-    chain = ConversationalRetrievalChain.from_llm(llm, retriever=retriever,return_source_documents=True) #, return_source_documents=True
-
-    prompt_template = """Use the context below to answer the question below:
-    Context: {context}
-
-    Question: {prompt}
-    Answer:"""
-    multi_retriever = VectorStoreRetriever(vectorstore=db, search_kwargs={"k": max(1,int(k/2))})
-    PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "prompt"])
-    multi_chain = LLMChain(llm=llm, prompt=PROMPT)
 
     for idx, row in df_input.iterrows():
         prompt = str(row[question_column])
@@ -297,10 +274,11 @@ def run_rag_multihop(model_name, emb_model_name, file_path, question_column, fai
             data_dict['chat_history'] = []
 
             queries = []
-            queries = generate_subqueries(prompt, model_name[8:])
+            queries = generate_subqueries(prompt, model_name)
 
             if len(queries) == 0:
-                response = chain(inputs={"question":data_dict['prompt'], "chat_history":data_dict['chat_history']})
+                # response = chain(inputs={"question":data_dict['prompt'], "chat_history":data_dict['chat_history']})
+                response = generate_kb_response(prompt, model_name, system_prompt=system_prompt, template=template,temperature=temperature, include_source=False, retriever = retriever)
                 df_input.loc[idx,'rag_response'] = response['answer']
                 df_input.loc[idx,'source_documents'] = str(response['source_documents'])
             else:
@@ -362,15 +340,20 @@ def run_rag_multihop(model_name, emb_model_name, file_path, question_column, fai
                 source_documents_content = updated_source_documents_content
                 print(f"Source documents used (before concat): {num_docs_used}")
                 print(f"Length of source documents: {len(source_documents_content)}")
-
                 #resort documents on cosine similarity to prompt 
                 # source_documents_content = sorted(source_documents_content, key=lambda x: calc_similarity(embedding_function.embed_documents([x])[0],embedding_function.embed_documents([prompt])[0]), reverse=True)
 
                 #concatenate list seperated by \n
                 source_documents_content = '\n\n'.join(source_documents_content)
-                response = generate_langchain_response(data_dict['prompt'], model=model, system_text="You are an expert in the field using the following information to answer a question:\n" +source_documents_content, template="{context}\n", temperature=temperature)
-                # response = multi_chain(inputs={"context": source_documents_content, "prompt": data_dict['prompt']} )
-                # df_input.loc[idx,'rag_response'] = response['text']
+                if template is None:
+                    prompt_full = f"""Answer based on the following context
+
+                    {source_documents_content}
+
+                    Question: {prompt}"""
+                else:
+                    prompt_full = template.format(prompt=prompt, context=source_documents_content)
+                response = generate_response(prompt_full, model_name, system_prompt=system_prompt, temperature=temperature)
                 df_input.loc[idx,'rag_response'] = response
                 df_input.loc[idx,'source_documents'] = str(source_documents)
         else:

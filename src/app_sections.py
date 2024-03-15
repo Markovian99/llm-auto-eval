@@ -501,14 +501,12 @@ def analyzer_window():
                 
                 for qa_file in qa_files:                
                     rag_results = run_rag_multihop(model_name=model, emb_model_name=emb_model, file_path=os.path.join(experiment_dir, qa_file),\
-                            question_column="question", faiss_dir="../data/temp-faiss-db",temperature=0, k=k)
-
+                            question_column="question", system_prompt= system_prompt, template=prompt_template, faiss_dir="../data/temp-faiss-db",temperature=0, k=k)
+                    rag_results["experiment_num"] = experiment_num
                     rag_results["experiment_description"] = experiment_desc
                     rag_results["experiment_category"] = get_experiment_category(qa_file)
-                    rag_results["experiment_num"] = experiment_num
                     rag_results["qa_file"] = qa_file
                     rag_results.to_csv(os.path.join(experiment_dir, f"Exp_{experiment_num}_results.csv"), index=False)
-
                     all_results.append(rag_results)
 
         if all_results:

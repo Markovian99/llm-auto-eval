@@ -437,12 +437,7 @@ def create_knowledge_base(docs,faiss_dir="../data/faiss-db",embedding_model="all
             doc.metadata.pop('start_index_orig', None)
 
     print(f"Created {len(docs_split)} documents")
-
-    # Will download the model the first time it runs
-    # embedding_function = SentenceTransformerEmbeddings(
-    #     model_name=embedding_model,
-    #     cache_folder="../models/sentencetransformers",
-    # )
+    
     embedding_function = HuggingFaceEmbeddings(
         model_name=embedding_model,
         # model_kwargs={'device': 'cuda'},
@@ -468,32 +463,19 @@ def create_knowledge_base(docs,faiss_dir="../data/faiss-db",embedding_model="all
 # Update: https://github.com/Raudaschl/rag-fusion/blob/master/main.py
 # This appears to do the same as what I am doing here, but also re-ranks the documents
 # So, maybe pull more than needed , re-rank, and drop
-# Function to generate queries using OpenAI's ChatGPT
-def generate_subqueries(original_query, model, second_try=False):
-    try:
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that helps users identify how to search for relevant information. You do not introduce any new topics, specific details, or key words, but provide users with sub-queries phrased as questions to gather information to answer the original input query."},
-                {"role": "user", "content": 
-                f"""Please return 2 sub-queries that would be helpful to gather the required information to answer the original query. The format of your response should be:
+# Function to generate queries using the LLM
+def generate_subqueries(original_query, model_name, second_try=False):
+    system_prompt = "You are a helpful assistant that helps users identify how to search for relevant information. You do not introduce any new topics, specific details, or key words, but provide users with sub-queries phrased as questions to gather information to answer the original input query."
+    prompt = f"""Please return 2 sub-queries that would be helpful to gather the required information to answer the original query. The format of your response should be:
                 1. Sub-query 1
                 2. Sub-query 2
 
                 Original query: {original_query}
 
                 Sub-queries:"
-                """}
-            ]
-        )
-    except Exception as e:
-        print(e)
-        time.sleep(5)
-        if second_try:
-            return []
-        return generate_subqueries(original_query, model, second_try=True)
-
-    generated_queries = response.choices[0]["message"]["content"].strip()
+                """
+    response = generate_response(prompt, model_name, system_prompt=system_prompt, temperature=0)
+    generated_queries = response.strip()
     if len(generated_queries) < MIN_QUESTION_LENGTH or generated_queries[:MIN_QUESTION_LENGTH].lower().find("n/a") >-1:
         generated_queries = []
     else:
@@ -512,9 +494,6 @@ def generate_subqueries(original_query, model, second_try=False):
 
 def generate_kb_response(prompt, model, system_prompt="",template=None,faiss_dir="../data/faiss-db", temperature=0, k=4, include_source=False, retriever = None):
     # (prompt, model, template=None,faiss_dir="../data/faiss-db", temperature=0, k=4)
-
-    if not model.startswith("OpenAI: "):
-        return "Please select an OpenAI model."
 
     if not retriever:
         embedding_function = HuggingFaceEmbeddings(
